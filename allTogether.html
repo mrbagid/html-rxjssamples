@@ -1,0 +1,106 @@
+<html>
+  <body>
+
+    <h1>Open Chrome DevTools, Console</h1>
+    <p>Click very fast Sequence button</p>
+    <p>See order difference between Slowest and Sequence</p>
+    <p>See timming difference between Parallel and Sequence</p>
+    <p>Cancel Parallel or Sequence</p>
+
+    <button id='par'>Parallel</button>
+    <button id='seq'>Sequence</button>
+    <button id='slo'>Slowest</button>
+    <button id='can'>Cancel</button>    
+    <input id='editText' type='text' oninput='window.onTypping();'/>
+    <p id='show'></p>
+
+    <script type="module">
+      import { from, map, tap, debounceTime, delay, forkJoin, timer, interval, Subject, distinctUntilChanged, concatAll, mergeAll, fromEvent, concatMap, takeUntil, take, toArray} from "https://dev.jspm.io/rxjs@7";
+
+      var myLog = '';
+
+      //channels of events, observable and observer at the same time
+      const $eventsChannel1 = new Subject();
+      const $cancelChannel2 = new Subject();
+
+      //DOM elements from html page
+      var parBut = document.getElementById('par');
+      var seqBut = document.getElementById('seq');
+      var sloBut = document.getElementById('slo');
+      var canBut = document.getElementById('can');
+      var showP = document.getElementById('show');
+      var editText = document.getElementById('editText');
+
+      //print things in paragraph and console
+      function showIt(toLog){
+        myLog += toLog+'\n';
+        showP.innerHTML=myLog;
+        console.log(toLog);
+      }
+      //any time user types on input
+      function onTypping(){
+        var newChar = editText.value;
+        editText.value = '';
+        $eventsChannel1.next(newChar);
+      }
+      window.onTypping = onTypping;//export function
+
+      //show typped but filter repeated
+      $eventsChannel1.asObservable().pipe(
+        distinctUntilChanged(),
+        ).subscribe(showIt);
+
+      //cancel signal
+      fromEvent(canBut, 'click').pipe(
+        map(()=>{
+          $cancelChannel2.next();//generates cancel event
+          return 'cancel pressed';
+        })
+        ).subscribe(showIt);
+
+      function orderString(results){
+        return results[0].substring(0,1)+'-'+results[1].substring(0,1);
+      }
+
+      //the reference clock, ticks each second
+      interval(1000).pipe(map(()=>'tick')).subscribe(showIt);
+
+      var runner1 = timer(1000).pipe(map(()=>'1-runner1 finished'));
+      var runner2 = timer(2000).pipe(map(()=>'2-runner2 finished'));
+      var tasks = from([runner2,runner1]);
+
+      fromEvent(parBut, 'click')
+        .pipe(
+          tap(()=>showIt('parallel started')),
+          delay(1000),//this race starts after 1 sec
+          concatMap(()=>tasks),//after delay launch parallel tasks
+          mergeAll(),//catch results on each completion
+          takeUntil($cancelChannel2)//until canceled or until parallel tasks complete
+        )
+        .subscribe(showIt);
+
+      fromEvent(seqBut, 'click')
+        .pipe(
+          debounceTime(500),//user can click fast but only one click per 500ms will work
+          tap(()=>showIt('sequence started')),          
+          concatMap(()=>tasks),//after delay launch sequence tasks
+          concatAll(),//runner2 waits until runner 1 finished then it starts       
+          take(2),
+          toArray(),//catch all results together, waiting for completion
+          map(orderString),//it should print 2-1, never 1-2
+          takeUntil($cancelChannel2)//until canceled or until sequence tasks complete
+        )
+        .subscribe(showIt);
+
+
+      var wait4Slowest = forkJoin([runner1,runner2]);
+      //run in parallel but wait for the slowest to complete
+      fromEvent(slo, 'click').pipe(
+          tap(()=>showIt('wait4Slowest started')),  
+          concatMap(()=>wait4Slowest),//forkjoin generates event with an array inside with the results
+          map(orderString),//it should print 1-2, never 2-1
+        ).subscribe(showIt);
+    </script>
+  </body>
+</html>
+
